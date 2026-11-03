@@ -1,51 +1,71 @@
+#include <filesystem>
 #include <iostream>
 
 #include <SFML/Graphics.hpp>
 #include <SFML/OpenGL.hpp>
 
-int main() {
-    // OpenGL settings we request for:
+int main(int argc, char** argv) {
+    std::filesystem::path executablePath = argc > 0 ? std::filesystem::path{argv[0]} : std::filesystem::path{};
+    const std::filesystem::path shaderDirectory = executablePath.has_parent_path() ? executablePath.parent_path() : std::filesystem::current_path();
+
+    const auto mainVertexShader = shaderDirectory / "main.vert";
+    const auto mainFragmentShader = shaderDirectory / "main.frag";
+    const auto blurFragmentShader = shaderDirectory / "blur.frag";
+
+    if (!std::filesystem::exists(mainVertexShader) || !std::filesystem::exists(mainFragmentShader) ||
+        !std::filesystem::exists(blurFragmentShader)) {
+        std::cerr << "Shader files were not found in the executable directory: " << shaderDirectory << '\n';
+        return 1;
+    }
+
     sf::ContextSettings settings;
-    settings.depthBits = 24;   // 24-bit depth buffer
-    settings.stencilBits = 8;  // 8-bit stencil buffer
-    // Request OpenGL 2.1 for compatibility with both SFML/Graphics AND macOS:
-    //  - SFML's Graphics module implementation relies on legacy fixed-function pipeline features
-    //     of OpenGL, which means only up to OpenGL 2.1. Any newer version requires Compatibility
-    //     profile (i.e., maintaining legacy features).
-    //  - macOS has deprecated OpenGL support, meaning for anything newer than 2.1 (i.e., 3.0 and
-    //      newer), only Core profile is supported, i.e., REMOVING legacy fixed-function features.
-    // As a result, if you want to both support macOS AND use SFML's Graphics features (e.g.,
-    // sf::RenderWindow), you can use at latest OpenGL 2.1, which is a nightmare.
+    settings.depthBits = 24;
+    settings.stencilBits = 8;
     settings.majorVersion = 2;
     settings.minorVersion = 1;
+
     sf::RenderWindow window(sf::VideoMode({1280, 720}), "Shaders", sf::State::Windowed, settings);
-    // Query the settings we actually received (may be different):
     const auto& actualSettings = window.getSettings();
     std::cout << "OpenGL version " << actualSettings.majorVersion << "."
               << actualSettings.minorVersion << " flags: " << actualSettings.attributeFlags << '\n';
-    // Fullscreen triangle, as described in the prep.
+
     sf::VertexArray fullscreenTriangle(sf::PrimitiveType::Triangles, 3);
-    fullscreenTriangle[0].position = {-1, -1};  // bottom-left
-    fullscreenTriangle[1].position = {3, -1};   // bottom-right
-    fullscreenTriangle[2].position = {-1, 3};   // top-left
-    fullscreenTriangle[0].texCoords = {0, 0};
-    fullscreenTriangle[1].texCoords = {2, 0};
-    fullscreenTriangle[2].texCoords = {0, 2};
-    // load vertex and fragment shaders:
-    sf::Shader shader(std::filesystem::path{"main.vert"}, std::filesystem::path{"main.frag"});
-    // TODO: eventually add another Shader here which uses the blur fragment shader,
-    // also create a sf::RenderTexture...
+    fullscreenTriangle[0].position = {-1.0f, -1.0f};
+    fullscreenTriangle[1].position = {3.0f, -1.0f};
+    fullscreenTriangle[2].position = {-1.0f, 3.0f};
+    fullscreenTriangle[0].texCoords = {0.0f, 0.0f};
+    fullscreenTriangle[1].texCoords = {2.0f, 0.0f};
+    fullscreenTriangle[2].texCoords = {0.0f, 2.0f};
+
+    sf::Shader sceneShader(mainVertexShader, mainFragmentShader);
+    sf::Shader blurShader(mainVertexShader, blurFragmentShader);
+
+    sf::RenderTexture sceneTexture({1280u, 720u});
+
+    sf::Sprite sceneSprite(sceneTexture.getTexture());
+    sceneSprite.setTexture(sceneTexture.getTexture(), true);
+
+    sf::Vector2f texelSize(1.0f / static_cast<float>(sceneTexture.getSize().x),
+                          1.0f / static_cast<float>(sceneTexture.getSize().y));
+
     while (window.isOpen()) {
         while (auto e = window.pollEvent()) {
             if (e->is<sf::Event::Closed>()) {
                 return 0;
             }
         }
-        // TODO: set shader uniforms and eventually draw into
-        // a RenderTexture first before postprocessing into the window target.
+
+        sceneTexture.clear(sf::Color::Black);
+        sceneTexture.draw(fullscreenTriangle, &sceneShader);
+        sceneTexture.display();
+
+        blurShader.setUniform("texture", sceneTexture.getTexture());
+        blurShader.setUniform("texelSize", texelSize);
+
         window.clear(sf::Color::Black);
-        window.draw(fullscreenTriangle, &shader);
+        window.draw(sceneSprite, &blurShader);
         window.display();
     }
+
     return 0;
 }
